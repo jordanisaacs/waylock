@@ -28,6 +28,7 @@ pub const Color = enum {
 };
 
 pub const Options = struct {
+    daemonize: bool = false,
     init_color: u32 = 0xff002b36,
     input_color: u32 = 0xff6c71c4,
     fail_color: u32 = 0xffdc322f,
@@ -65,6 +66,7 @@ session_lock_manager: ?*ext.SessionLockManagerV1 = null,
 session_lock: ?*ext.SessionLockV1 = null,
 viewporter: ?*wp.Viewporter = null,
 buffers: [3]*wl.Buffer,
+do_daemonize: bool = false,
 
 seats: std.SinglyLinkedList(Seat) = .{},
 outputs: std.SinglyLinkedList(Output) = .{},
@@ -72,6 +74,51 @@ outputs: std.SinglyLinkedList(Output) = .{},
 xkb_context: *xkb.Context,
 password: std.BoundedArray(u8, auth.password_size_max) = .{ .buffer = undefined },
 auth_connection: auth.Connection,
+
+fn daemonize() void {
+    const fds = os.pipe() catch |err| {
+        fatal("failed to pipe: {s}", .{@errorName(err)});
+    };
+
+    const pid = os.fork() catch |err| {
+        fatal("failed to fork: {s}", .{@errorName(err)});
+    };
+
+    if (pid == 0) {
+        _ = os.linux.syscall0(.setsid);
+        os.close(fds[0]);
+        const devnull = std.fs.openFileAbsolute("/dev/null", .{ .read = true }) catch {
+            os.exit(1);
+        };
+        os.dup2(std.io.getStdOut().handle, devnull.handle) catch {
+            os.exit(1);
+        };
+        os.dup2(std.io.getStdErr().handle, devnull.handle) catch {
+            os.exit(1);
+        };
+        var success = [1]u8{0};
+        os.chdir("/") catch {
+            _ = os.write(fds[1], &success) catch {};
+            os.exit(1);
+        };
+        success[0] = 1;
+        _ = os.write(fds[1], &success) catch {
+            os.exit(1);
+        };
+        os.close(fds[1]);
+    } else {
+        os.close(fds[1]);
+        var success = [1]u8{0};
+        _ = os.read(fds[0], &success) catch {
+            fatal("Failed to daemonize.", .{});
+        };
+        if (success[0] == 0) {
+            fatal("Failed to daemonize", .{});
+        }
+        os.close(fds[0]);
+        os.exit(0);
+    }
+}
 
 pub fn run(options: Options) void {
     var lock: Lock = .{
@@ -89,6 +136,7 @@ pub fn run(options: Options) void {
 
     const poll_wayland = 0;
     const poll_auth = 1;
+    lock.do_daemonize = options.daemonize;
 
     lock.pollfds[poll_wayland] = .{
         .fd = lock.display.getFd(),
@@ -351,6 +399,9 @@ fn session_lock_listener(_: *ext.SessionLockV1, event: ext.SessionLockV1.Event, 
         .locked => {
             assert(lock.state == .locking);
             lock.state = .locked;
+            if (lock.do_daemonize) {
+                daemonize();
+            }
         },
         .finished => {
             switch (lock.state) {

@@ -15,6 +15,7 @@ const usage =
     \\
     \\  -h                     Print this help message and exit.
     \\  -version               Print the version number and exit.
+    \\  -daemonize             Detach from the controlling terminal after locking.
     \\  -log-level <level>     Set the log level to error, warning, info, or debug.
     \\
     \\  -init-color 0xRRGGBB   Set the initial color.
@@ -31,6 +32,7 @@ pub fn main() void {
     const result = flags.parse(args, &[_]flags.Flag{
         .{ .name = "-h", .kind = .boolean },
         .{ .name = "-version", .kind = .boolean },
+        .{ .name = "-daemonize", .kind = .boolean },
         .{ .name = "-log-level", .kind = .arg },
         .{ .name = "-init-color", .kind = .arg },
         .{ .name = "-input-color", .kind = .arg },
@@ -69,6 +71,7 @@ pub fn main() void {
     }
 
     var options: Lock.Options = .{};
+    if (result.boolFlag("-daemonize")) options.daemonize = true;
     if (result.argFlag("-init-color")) |raw| options.init_color = parse_color(raw);
     if (result.argFlag("-input-color")) |raw| options.input_color = parse_color(raw);
     if (result.argFlag("-fail-color")) |raw| options.fail_color = parse_color(raw);
